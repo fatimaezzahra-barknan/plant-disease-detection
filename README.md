@@ -38,10 +38,10 @@ Leaf disease classifier built with **transfer learning** on **ResNet18**, traine
 **Gradio app:**
 
     cd app_gradio
-    pip install -r requirements.txt gradio
+    pip install -r requirements.txt
     python app.py
 
-The Gradio app expects `meilleur_modele.pth` in the same folder.
+The Gradio app loads the trained model from `models/meilleur_modele.pth`.
 
 **Web app:** serve the `web/` folder with any static server, for example:
 
