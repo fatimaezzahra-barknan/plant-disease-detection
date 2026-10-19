@@ -31,7 +31,6 @@ Leaf disease classifier built with **transfer learning** on **ResNet18**, traine
 | `app_gradio/` | Gradio application (`app.py`) and its requirements |
 | `web/` | Deployed web app: `index.html`, ONNX model, labels |
 | `models/` | Trained PyTorch weights (`.pth`) |
-| `report/` | Project report in French and English (PDF) |
 
 ## Run locally
 
