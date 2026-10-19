@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plant Disease Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<style>
+  :root { --bg:#f6faf7; --card:#ffffff; --text:#14231a; --muted:#5b6b61; --border:#dbe7df;
+          --green:#16a34a; --orange:#f97316; --grey:#94a3b8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1511; --card:#152019; --text:#e7f1ea; --muted:#9db0a3; --border:#25352b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .page { max-width:1100px; margin:auto; padding:24px 16px 48px; }
+  header { text-align:center; margin-bottom:24px; }
+  header h1 { font-size:2em; margin:0 0 6px; }
+  header p { color:var(--muted); margin:0; }
+  #status { text-align:center; color:var(--muted); font-size:.9em; margin-bottom:18px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width: 800px) { .grid { grid-template-columns:1fr; } }
+  .panel { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px; }
+  .drop { border:2px dashed var(--border); border-radius:14px; height:320px; display:flex;
+          align-items:center; justify-content:center; text-align:center; cursor:pointer;
+          color:var(--muted); overflow:hidden; }
+  .drop.hover { border-color:var(--green); }
+  .drop img { max-width:100%; max-height:100%; object-fit:contain; display:none; }
+  .drop.filled img { display:block; }
+  .drop.filled span { display:none; }
+  .buttons { display:flex; gap:10px; margin-top:12px; }
+  button { flex:1; padding:12px; border-radius:12px; border:1px solid var(--border); font-size:1em;
+           cursor:pointer; background:var(--card); color:var(--text); }
+  button.primary { background:var(--green); color:white; border:none; font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .examples h3 { font-size:.95em; color:var(--muted); margin:18px 0 8px; font-weight:500; }
+  .thumbs { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
+  .thumbs img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px; cursor:pointer;
+                border:2px solid transparent; }
+  .thumbs img:hover { border-color:var(--green); }
+  .result { border-radius:16px; padding:22px; text-align:center; border:2px solid var(--grey); }
+  .result.empty { border-style:dashed; color:var(--muted); padding:60px 20px; }
+  .result.healthy { background:rgba(34,197,94,.10); border-color:#22c55e; }
+  .result.diseased { background:rgba(249,115,22,.10); border-color:var(--orange); }
+  .result.uncertain { background:rgba(148,163,184,.15); }
+  .icon { font-size:2.6em; }
+  .plant { text-transform:uppercase; letter-spacing:1px; font-size:.85em; color:var(--muted); margin-top:6px; }
+  .title { font-size:1.6em; font-weight:700; margin:4px 0 14px; }
+  .bar { height:10px; background:rgba(148,163,184,.3); border-radius:99px; overflow:hidden; }
+  .fill { height:100%; background:var(--green); border-radius:99px; }
+  .diseased .fill { background:var(--orange); }
+  .uncertain .fill { background:var(--grey); }
+  .message { margin-top:12px; font-size:.95em; color:var(--muted); }
+  .top3 h3 { font-size:.95em; color:var(--muted); margin:20px 0 10px; font-weight:500; }
+  .row { margin-bottom:10px; }
+  .row .head { display:flex; justify-content:space-between; font-size:.92em; margin-bottom:4px; }
+  details { margin-top:16px; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 18px; }
+  summary { cursor:pointer; font-weight:600; }
+  details p, details li { color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>🌿 Plant Disease Detection</h1>
+    <p>Upload a photo of a leaf: the AI identifies the disease in a few seconds.</p>
+  </header>
+  <div id="status">⏳ Loading model…</div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="drop" id="drop">
+        <span>📷 Click or drag a leaf photo here</span>
+        <img id="preview" alt="Leaf preview">
+      </div>
+      <input type="file" id="file" accept="image/*" hidden>
+      <div class="buttons">
+        <button class="primary" id="analyze" disabled>🔍 Analyze</button>
+        <button id="clear">🗑️ Clear</button>
+      </div>
+      <div class="examples">
+        <h3>Try an example</h3>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="result empty" id="result">⬅️ Upload a leaf photo to start the diagnosis.</div>
+      <div class="top3" id="top3"></div>
+    </div>
+  </div>
+
+  <details>
+    <summary>🌱 Supported plants (14 species, 38 classes)</summary>
+    <p id="plants"></p>
+    <p>⚠️ The model only knows these plants. For any other species, it will still give an answer, which will be wrong.</p>
+  </details>
+  <details>
+    <summary>ℹ️ About the model</summary>
+    <ul>
+      <li><b>Architecture</b>: ResNet18 pre-trained on ImageNet, fine-tuned with transfer learning</li>
+      <li><b>Data</b>: PlantVillage (54,305 images, 38 classes)</li>
+      <li><b>Test performance</b>: 98.5% accuracy, 0.981 macro F1-score</li>
+      <li><b>Runtime</b>: the model (ONNX format) runs directly in your browser</li>
+      <li><b>Limitation</b>: trained on lab photos (single leaf, plain background). Field photos are recognized less reliably.</li>
+    </ul>
+  </details>
+</div>
+
+<script>
+const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225], THRESHOLD = 0.60, SIZE = 224;
+const EMPTY = "⬅️ Upload a leaf photo to start the diagnosis.";
+let session = null, labels = null, imageLoaded = false;
+
+const $ = id => document.getElementById(id);
+const drop = $("drop"), preview = $("preview"), fileInput = $("file");
+const analyzeBtn = $("analyze"), result = $("result"), top3 = $("top3");
+
+async function init() {
+  try {
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+    labels = await (await fetch("labels.json")).json();
+    session = await ort.InferenceSession.create("model.onnx", { executionProviders: ["wasm"] });
+    $("status").textContent = "✅ Model loaded: ready for diagnosis";
+    const plants = [...new Set(labels.map(l => l.nom.split(" – ")[0]))].sort();
+    $("plants").textContent = plants.join(" · ");
+    updateButton();
+    if (imageLoaded) analyze();
+  } catch (e) {
+    $("status").textContent = "❌ Model loading error: " + e.message;
+  }
+}
+
+function updateButton() { analyzeBtn.disabled = !(session && imageLoaded); }
+
+function loadImage(src) {
+  preview.onload = () => { imageLoaded = true; drop.classList.add("filled"); updateButton(); if (session) analyze(); };
+  preview.src = src;
+}
+
+// Same preprocessing as in training: Resize(256) + CenterCrop(224) + Normalize
+function preprocess(img) {
+  const c = document.createElement("canvas"); c.width = SIZE; c.height = SIZE;
+  const ctx = c.getContext("2d");
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const scale = 256 / Math.min(w, h), side = SIZE / scale;
+  ctx.drawImage(img, (w - side) / 2, (h - side) / 2, side, side, 0, 0, SIZE, SIZE);
+  const d = ctx.getImageData(0, 0, SIZE, SIZE).data, n = SIZE * SIZE;
+  const x = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++)
+    for (let k = 0; k < 3; k++)
+      x[k * n + i] = (d[i * 4 + k] / 255 - MEAN[k]) / STD[k];
+  return new ort.Tensor("float32", x, [1, 3, SIZE, SIZE]);
+}
+
+async function analyze() {
+  if (!session || !imageLoaded) return;
+  const feeds = {}; feeds[session.inputNames[0]] = preprocess(preview);
+  const outputs = await session.run(feeds);
+  const logits = Array.from(outputs[session.outputNames[0]].data);
+  const max = Math.max(...logits);
+  const ex = logits.map(v => Math.exp(v - max));
+  const sum = ex.reduce((a, b) => a + b, 0);
+  const p = ex.map(v => v / sum);                           // softmax
+  const idx = [...p.keys()].sort((a, b) => p[b] - p[a]).slice(0, 3);
+  show(idx, p);
+}
+
+function show(idx, p) {
+  const best = labels[idx[0]], conf = p[idx[0]];
+  const [plant, state] = best.nom.split(" – ");
+  let cls, icon, title, message;
+  if (conf < THRESHOLD) {
+    cls = "uncertain"; icon = "❓"; title = "Uncertain diagnosis";
+    message = "The model is unsure. Take a sharper photo of a single, well-lit leaf, or check that the plant is in the supported list.";
+  } else if (best.brut.includes("healthy")) {
+    cls = "healthy"; icon = "✅"; title = state; message = "No disease symptoms detected.";
+  } else {
+    cls = "diseased"; icon = "⚠️"; title = state;
+    message = "Symptoms consistent with this disease. Confirm with a specialist before any treatment.";
+  }
+  result.className = "result " + cls;
+  result.innerHTML = `<div class="icon">${icon}</div><div class="plant">${plant}</div>
+    <div class="title">${title}</div>
+    <div class="bar"><div class="fill" style="width:${(conf * 100).toFixed(0)}%"></div></div>
+    <div>Confidence: <b>${(conf * 100).toFixed(1)}%</b></div><div class="message">${message}</div>`;
+  top3.innerHTML = "<h3>Top 3 possible diagnoses</h3>" + idx.map(i => `
+    <div class="row"><div class="head"><span>${labels[i].nom}</span><span>${(p[i] * 100).toFixed(1)}%</span></div>
+    <div class="bar"><div class="fill" style="width:${(p[i] * 100).toFixed(1)}%"></div></div></div>`).join("");
+}
+
+function clearAll() {
+  imageLoaded = false; preview.removeAttribute("src"); drop.classList.remove("filled");
+  result.className = "result empty"; result.textContent = EMPTY; top3.innerHTML = ""; fileInput.value = ""; updateButton();
+}
+
+drop.onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) loadImage(URL.createObjectURL(fileInput.files[0])); };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("hover"); };
+drop.ondragleave = () => drop.classList.remove("hover");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("hover");
+  if (e.dataTransfer.files[0]) loadImage(URL.createObjectURL(e.dataTransfer.files[0])); };
+analyzeBtn.onclick = analyze;
+$("clear").onclick = clearAll;
+
+for (let i = 1; i <= 6; i++) {
+  const t = document.createElement("img");
+  t.src = `example_${i}.jpg`; t.alt = `Example ${i}`;
+  t.onerror = () => { t.src = `exemple_${i}.jpg`; t.onerror = () => t.remove(); };
+  t.onclick = () => loadImage(t.src);
+  $("thumbs").appendChild(t);
+}
+
+init();
+</script>
+</body>
+</html>
